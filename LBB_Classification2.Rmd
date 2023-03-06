@@ -1,0 +1,302 @@
+---
+title: "Predicting Term Deposit Of Bank Marketing Dataset by Naive Bayes and Random Forest Models"
+author: "Alvian Khairi"
+date: '2022-06-07'
+output: 
+  html_document:
+    theme: yeti
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+# chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>"
+)
+```
+
+
+# Intro
+
+Abstract: The data is related with direct marketing campaigns (phone calls) of a Portuguese banking institution. The classification goal is to predict if the client will subscribe a term deposit (variable y).
+
+Data Set Information: The data is related with direct marketing campaigns of a Portuguese banking institution. The marketing campaigns were based on phone calls. Often, more than one contact to the same client was required, in order to access if the product (bank term deposit) would be ('yes') or not ('no') subscribed.
+
+Dataset from : <http://archive.ics.uci.edu/ml/datasets/Bank+Marketing#>
+
+
+# Data Preparation
+
+## Import Library
+```{r}
+library(dplyr)
+library(caret)
+library(e1071)
+library(partykit)
+library(ROCR)
+library(rpart.plot)
+library(randomForest)
+```
+
+
+## Read Data
+
+```{r}
+bank <- read.csv("data_input/bank-additional-full.csv", sep = ";", stringsAsFactors = T)
+head(bank)
+```
+
+```{r}
+glimpse(bank)
+```
+
+## Attribute Information:
+
+### Bank client data:
+
+- Age (numeric)
+- Job : type of job (categorical: 'admin.', 'blue-collar', 'entrepreneur', 'housemaid', 'management', 'retired', 'self-employed', 'services', 'student', 'technician', 'unemployed', 'unknown')
+- Marital : marital status (categorical: 'divorced', 'married', 'single', 'unknown' ; note: 'divorced' means divorced or widowed)
+- Education (categorical: 'basic.4y', 'basic.6y', 'basic.9y', 'high.school', 'illiterate', 'professional.course', 'university.degree', 'unknown')
+- Default: has credit in default? (categorical: 'no', 'yes', 'unknown')
+- Housing: has housing loan? (categorical: 'no', 'yes', 'unknown')
+- Loan: has personal loan? (categorical: 'no', 'yes', 'unknown')
+
+
+
+### Related with the last contact of the current campaign:
+
+- Contact: contact communication type (categorical: 'cellular','telephone')
+- Month: last contact month of year (categorical: 'jan', 'feb', 'mar', ..., 'nov', 'dec')
+- Day_of_week: last contact day of the week (categorical: 'mon','tue','wed','thu','fri')
+- Duration: last contact duration, in seconds (numeric). Important note: this attribute highly affects the output target (e.g., if duration=0 then y='no'). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, this input should only be included for benchmark purposes and should be discarded if the intention is to have a realistic predictive model.
+
+
+
+### Other attributes:
+
+- Campaign: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+- Pdays: number of days that passed by after the client was last contacted from a previous campaign (numeric; 999 means client was not previously contacted)
+- Previous: number of contacts performed before this campaign and for this client (numeric)
+- Poutcome: outcome of the previous marketing campaign (categorical: 'failure','nonexistent','success')
+
+
+### Social and economic context attributes
+
+- Emp.var.rate: employment variation rate - quarterly indicator (numeric)
+- Cons.price.idx: consumer price index - monthly indicator (numeric)
+- Cons.conf.idx: consumer confidence index - monthly indicator (numeric)
+- Euribor3m: euribor 3 month rate - daily indicator (numeric)
+- Nr.employed: number of employees - quarterly indicator (numeric)
+
+### Output variable (desired target):
+
+- y - has the client subscribed a term deposit? (binary: 'yes', 'no')
+
+## Checking for missing values
+
+```{r}
+anyNA(bank)
+```
+
+> Data has no missing Value
+
+
+# Pre-Processing Data
+
+## Splitting Data
+
+```{r}
+RNGkind(sample.kind = "Rounding") 
+set.seed(200)
+
+# index sampling
+index <- sample(x = nrow(bank), 
+                size = nrow(bank)*0.8) 
+
+# splitting
+bank_train <- bank[index, ]
+bank_test <- bank[-index, ]
+```
+
+
+## Checking the balance of data proportion
+
+```{r}
+prop.table(table(bank_train$y))
+```
+> The proportion of the data is 8:1, unbalanced data proportion.
+
+## Balancing Data
+
+```{r}
+RNGkind(sample.kind = "Rounding") 
+        
+set.seed(123)
+
+bank_train <- downSample(x = bank_train %>% 
+                           select(-y),
+                         y = bank_train$y,
+                         yname = "y")
+```
+
+```{r}
+prop.table(table(bank_train$y))
+```
+
+# Naïve Bayes Classifier Model
+ 
+```{r}
+model_naive <- naiveBayes(formula = y ~ ., data = bank_train, laplace = 1)
+```
+
+
+
+## ConfusionMatrix Evaluation
+```{r}
+test <- bank_test %>%  select(-y)
+naive_pred <- predict(object = model_naive, newdata = test)
+
+confusionMatrix(data = naive_pred, reference = bank_test$y, positive = "yes")
+```
+> The model has a fairly good accuracy and specificity in the 80% value range. but for sensitivity only around 76%.
+
+
+## ROC Evaluation
+```{r}
+bank_test$pred <- predict(object = model_naive, newdata = bank_test, type = "raw")
+bank_test$actual <- ifelse(test = bank_test$y == "yes", 1, 0)
+```
+
+```{r}
+# objek prediction
+roc_pred <- prediction(predictions = bank_test$pred[,1], labels = bank_test$actual)
+
+# ROC curve
+plot(performance(prediction.obj = roc_pred, measure = "tpr", x.measure = "fpr"))
+abline(0,1,lty = 8)
+```
+
+
+## AUC Evaluation
+
+```{r}
+vote_auc <- performance(prediction.obj = roc_pred, measure = "auc")
+vote_auc@y.values
+```
+> AUC = 0.96997, it can be concluded that the `model_naive` model is good in separating the 'yes' and 'not' classes.
+
+
+# Decision Tree Model
+
+```{r}
+model_tree <- ctree(formula = y ~ ., data = bank_train)
+```
+
+```{r}
+plot(model_tree, type="simple")
+```
+```{r}
+model_tree
+```
+```{r}
+tree_pred <- predict(object = model_tree, newdata = bank_test)
+
+confusionMatrix(data = tree_pred, reference = bank_test$y, positive = "yes")
+```
+> the tree_pred model has a fairly high accuracy of 84.46%, Sensitivity = 92.77% and Specificity = 83.34%.
+
+
+
+## ROC Evaluation
+
+
+```{r}
+# objek prediction
+roc_pred <- prediction(predictions = bank_test$pred[,1], labels = bank_test$actual)
+
+# ROC curve
+plot(performance(prediction.obj = roc_pred, measure = "tpr", x.measure = "fpr"))
+abline(0,1,lty = 8)
+```
+
+# Random Forest Model
+
+## Data Preprocessing
+
+```{r}
+n0_var <- nearZeroVar(bank)
+bank <- bank[ , -n0_var]
+```
+
+```{r}
+head(bank)
+```
+
+
+## Cross Validation
+
+```{r}
+RNGkind(sample.kind = "Rounding") 
+set.seed(200)
+
+# index sampling
+index <- sample(x = nrow(bank), 
+                size = nrow(bank)*0.8) 
+
+# splitting
+bank_train2 <- bank[index, ]
+bank_test2 <- bank[-index, ]
+```
+
+## Model Fitting
+
+```{r eval=FALSE}
+
+set.seed(417)
+
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5, # k-fold
+                    repeats = 3) # repetisi
+
+bank_forest<- train(y ~ .,
+                    data = bank_train2,
+                    method = "rf", # random forest
+                    trControl = ctrl)
+ 
+saveRDS(bank_forest, "bank_forest.RDS") # save model
+```
+
+
+```{r}
+b_forest <- readRDS("bank_forest.RDS")
+```
+
+```{r}
+b_forest$finalModel
+```
+## Confusion Matrix
+
+```{r}
+pred_forest <- predict(object = b_forest, newdata = bank_test2, type = "raw")
+```
+
+```{r}
+confusionMatrix(data = pred_forest, reference = bank_test2$y, positive = "yes")
+```
+> The model has a fairly high accuracy of 91.25%, but the sensitivity/recall value is very small at 56.49%
+
+
+# Conclusion
+
+based on the highest accuracy value, the random forest model has the highest accuracy, but in this case the recall value will be used as a comparison between the models. this is done to meet business needs, that the false negative value is very important to reconsider. then based on the recall value, the decision tree model is the best model for this case with a recall of 92.77%.
+
